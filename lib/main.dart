@@ -52,10 +52,16 @@ class _MyHomePageState extends State<MyHomePage> {
 
   late final MapController mapController;
   GeoJSONVT? geoJsonIndex;
+  GeoJSONVT? heatmapIndex;
   var infoText = 'No Info';
   var tileSize = 256.0;
   // Guessing best val here depends on a zoom level where there aren't many polys in display
   var tilePointCheckZoom = 14;
+
+  final _random = Random();
+  //int next(int min, int max) => min + _random.nextInt(max - min);
+  double doubleInRange(num start, num end) =>
+      _random.nextDouble() * (end - start) + start;
 
   @override
   void initState() async {
@@ -66,7 +72,8 @@ class _MyHomePageState extends State<MyHomePage> {
 
       //https://raw.githubusercontent.com/Azure-Samples/AzureMapsCodeSamples/master/AzureMapsCodeSamples/Common/data/geojson/US_County_Boundaries.json
       // https://www.mapchart.net/usa-counties.html
-      var json = jsonDecode(await rootBundle.loadString('assets/US_County_Boundaries.json'));
+      ///var json = jsonDecode(await rootBundle.loadString('assets/US_County_Boundaries.json'));
+      var json = {"type": "FeatureCollection", "features" : []};
       //var json = jsonDecode(await rootBundle.loadString('assets/ids.json'));
       //final appDocDir = await getApplicationDocumentsDirectory();
       //var geoJson = await featuresFromGeoJsonFile(File("${appDocDir.path}/assets/ids.json"));
@@ -74,6 +81,25 @@ class _MyHomePageState extends State<MyHomePage> {
       //var json = await featuresFromGeoJson( data );
       //var json = { 'pointList' : [[ -75.849253579389796, 47.6434349837781 ]] };
 
+      var latGeo = {"type": "FeatureCollection", "features" : []};
+      List features = latGeo['features'] as List;
+      for( var c = 0; c < 1000; c++) {
+        //var feature = {"type": "feature", "properties": {}, "geometry": {"type": "point", "coordinates": [doubleInRange(-90,90),doubleInRange(-180,180) ]}};
+        var feature = {"type": "Feature", "properties": {'val': doubleInRange(0,20)}, "geometry": {"type": "Point", "coordinates": [doubleInRange(-90,90),doubleInRange(-180,180) ]}};
+        features.add(feature);
+      }
+
+      heatmapIndex = GeoJSONVT(latGeo, GeoJSONVTOptions(
+          debug : 0,
+          buffer : 0,
+          indexMaxZoom: 14,
+          indexMaxPoints: 10000000,
+          tolerance : 0, // 1 is probably ok, 2+ may be odd if you have adjacent polys lined up and gets simplified
+          extent: tileSize.toInt()));
+     // setState(() { });
+    //});
+
+      /*
       print("json is $json");
       geoJsonIndex = GeoJSONVT(json, GeoJSONVTOptions(
         debug : 0,
@@ -82,8 +108,15 @@ class _MyHomePageState extends State<MyHomePage> {
         indexMaxPoints: 10000000,
         tolerance : 0, // 1 is probably ok, 2+ may be odd if you have adjacent polys lined up and gets simplified
         extent: tileSize.toInt()));
+
+
+       */
+
+
       setState(() { });
     });
+
+
 
   }
 
@@ -105,6 +138,8 @@ class _MyHomePageState extends State<MyHomePage> {
                 var y = (pt.y / tileSize).floor();
                 var tile = geoJsonIndex!.getTile(14, x, y);
 
+                /*
+
                 if(tile != null) {
                   for (var feature in tile.features) {
                     var polygonList = feature.geometry;
@@ -117,6 +152,10 @@ class _MyHomePageState extends State<MyHomePage> {
                     }
                   }
                 }
+
+
+
+                 */
                 setState(() {});
                 },
               center: LatLng(-2.219988165689301, 56.870017401753529),
@@ -133,6 +172,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
                     subdomains: ['a', 'b', 'c']),
               ),
+              /*
               SliceLayerWidget(
                 clusters: true,
                 index: geoJsonIndex,
@@ -157,6 +197,32 @@ class _MyHomePageState extends State<MyHomePage> {
                 drawFunc: (feature, count) {
                   return const Icon(Icons.free_breakfast, color: Colors.blue, size: 20);
               }),
+
+               */
+
+              SliceLayerWidget(
+                  clusters: false,
+                  markers: false,
+                  index: heatmapIndex,
+                  /*
+                  drawFunc: (feature, count) {
+                    return Container(
+                        child: FittedBox(
+                            fit: BoxFit.contain,
+                            child: Text("$count", style: const TextStyle(color: Colors.deepPurple),)
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                              color: Colors.deepPurple
+                            //color: ,
+                          ),)
+                    );
+                  }),
+
+
+                   */
+              )
+
             ]),
     ]);
   }
@@ -177,14 +243,25 @@ class VectorPainter extends CustomPainter with ChangeNotifier {
 
   VectorPainter({ required this.mapState, this.index, this.stream });
 
+  double calcFraction(int i) => (i - 1) / max((5 - 1), 1);
+  double calcBlur(double val) => (4 * val * val + 2) * 5 / 10;
+  static Color _getSpectrumColor(double value, {double alpha = 1}) =>
+      HSVColor.fromAHSV(alpha, (1 - value) * 225, 1, 1).toColor();
+  static double convertRadiusToSigma(double radius) {
+    return radius * 0.57735 + 0.5;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     tileState = TileState(mapState, const CustomPoint(256.0, 256.0));
+
 
     tileState!.loopOverTiles( (i,j, pos, matrix) {
       var tile = index?.getTile(tileState!.getTileZoom().toInt(), i, j);
       //if(tile != null)
       //  print("TILE ${tile!.minX * 256.0},${tile!.minY}   ${tile!.maxX}, ${tile!.maxY}");
+
+      ///print("TILE IS $tile");
 
       final featuresInTile = [];
 
@@ -199,6 +276,76 @@ class VectorPainter extends CustomPainter with ChangeNotifier {
       //FeatureDraw().draw(featuresInTile, pos, canvas, {});
       FeatureDraw().batchCallsDraw(featuresInTile, pos, canvas, {});
       canvas.restore();
+
+      var fraction = calcFraction(4);
+      var paint = Paint()..color = _getSpectrumColor(fraction);
+      paint.maskFilter =
+          MaskFilter.blur(BlurStyle.normal, calcBlur(1 - fraction));
+
+      canvas.save();
+      canvas.transform(matrix.storage);
+      //var rect = const Offset(0, 0) & const Size(256.0, 256.0);
+      //canvas.clipRect(rect);
+      for (var feature in featuresInTile) {
+       // print("feature $feature");
+        if (feature.type != 3) {
+          for( var item in feature.geometry ) {
+            //List<Offset> offsets = [];
+            ///canvas.drawCircle(Offset(item[0].toDouble(), item[1].toDouble()), feature.tags['val'], heatPaint);
+            final heatPaint = Paint();
+              //..maskFilter = MaskFilter.blur(BlurStyle.normal, convertRadiusToSigma(3))
+            heatPaint.color = const Color.fromRGBO(255, 0, 0, 0.75);
+            heatPaint.maskFilter = MaskFilter.blur(BlurStyle.normal, convertRadiusToSigma(4));
+           // heatPaint.blendMode = dartui.BlendMode.colorBurn;
+            heatPaint.shader =
+
+            const  RadialGradient(
+                  center: Alignment.center,
+                  colors: <Color>[
+                    const Color.fromRGBO(33,102,172,0),
+                    const Color.fromRGBO(103,169,207,1),
+                    const Color.fromRGBO(209,229,240,1),
+                    const Color.fromRGBO(253,219,199,1),
+                    const Color.fromRGBO(239,138,98,1),
+                    const Color.fromRGBO(178,24,43,1),
+
+                  ],
+            stops: [
+            0,
+      0.2,
+      0.4,
+      0.6,
+      0.8,
+      1,
+      ],)
+                  ///stops: const [
+                  ///  0.3,
+                  ///  0.6,
+                  ///  1.0
+                  ///]
+              .createShader(Rect.fromCircle(
+                center: Offset(item[0].toDouble(), item[1].toDouble()),
+                radius: feature.tags['val'],
+              ));
+            canvas.drawCircle(Offset(item[0].toDouble(), item[1].toDouble()), feature.tags['val'], heatPaint);
+            heatPaint.color = const Color.fromRGBO(0, 255, 0, 0.6);
+            heatPaint.maskFilter = MaskFilter.blur(BlurStyle.normal, convertRadiusToSigma(8));
+            canvas.drawCircle(Offset(item[0].toDouble(), item[1].toDouble()), feature.tags['val'], heatPaint);
+
+            //for (var c = 0; c < item.length; c++) {
+              ///offsets.add(Offset(item[c][0].toDouble(), item[c][1].toDouble()));
+              //print("item is $item");
+              //canvas.drawCircle(Offset(item[c][0].toDouble(), item[c][1].toDouble()), feature.tags['val'], paint);
+            //}
+
+          }
+        }
+
+      }
+      canvas.restore();
+
+
+      ///canvas.drawCircle(offset, radius, paint);
 
     });
   }
